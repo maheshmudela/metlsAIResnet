@@ -24,11 +24,11 @@ docker login -u mahesh1978
 
 # Tag your image with your Docker Hub username
 #docker tag mahesh1978/repomelts/melts-api :latest
-docker tag melts-api:v1.0 mahesh1978/repomelts:v1.0
+docker tag melts-api:1.0 mahesh1978/repomelts:1.0
 
 # Push the image to the registry
 #docker push mahesh1978/repomelts/melts-api:latest
-docker push mahesh1978/repomelts:v1.0
+docker push mahesh1978/repomelts:1.0
 
 #Then, on your server, simply run docker pull your-username/custom-tf-api:latest.
 
@@ -47,7 +47,8 @@ docker push mahesh1978/repomelts:v1.0
 #Start the container on your server:
 #docker run -d -p 80:5000 --name metls-container melts-api
 
-docker run -d -p 3000:8080 --name melts-container mahesh1978/repomelts:v1.0
+#docker run -d -p 3000:8080 --name melts-container mahesh1978/repomelts:1.0
+docker run -d -p 3000:8080 --name melts-container mahesh1978/repomelts:1.0 python -m uvicorn melts:app --host 0.0.0.0 --port 8080
 
 #-d: Runs the container in detached mode (in the background).
 #-p 80:5000: Maps port 80 on your host machine to port 5000 inside the container. This makes your API accessible via HTTP on port 80.
