@@ -1,0 +1,12 @@
+
+fastapi
+uvicorn
+tensorflow
+numpy
+pandas
+scikit-learn
+Pillow
+python-multipart
+python-dotenv
+matplotlib
+
