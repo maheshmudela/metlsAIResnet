@@ -76,10 +76,12 @@ docker ps
 #sh
 #curl -X 'POST' 'http://your-server-ip/v1/train'
 #Use code with caution.
+#curl -X 'POST' -H 'Content-Type: application/json' -d '{"param1": "value1", "param2": 123}' 'http://localhost:3000/v1/train'
+curl -X 'POST' 'http://localhost:3000/v1/train'
 
 #Evaluate the model:
 #sh
-#curl -X 'GET' 'http://your-server-ip/v1/evaluate'
+curl -X 'GET' 'http://localhost:3000/v1/evaluate'
 #Use code with caution.
 
 #Predict with an image file:

@@ -1,5 +1,49 @@
-import tensorflow as tf
 
+import os
+import io
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import Header
+from tensorflow.keras.models import Model, load_model
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Input
+from tensorflow.keras.optimizers import Adam
+from sklearn.model_selection import train_test_split
+from PIL import Image
+from pydantic import BaseModel
+import matplotlib
+import matplotlib.pyplot as plt
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+import io
+from PIL import Image
+
+from typing import Optional
+from fastapi import Header
+# On Python 3.10+, you could use:
+# from fastapi import Header
+# from typing import Annotated
+# from typing_extensions import Annotated # for older python versions
+
+
+# --- Globals and Initialization ---
+MODEL_PATH = "models/modelMelts.keras"
+DATA_PATH = "data/training_data.csv"
+
+# The main FastAPI application instance
+app = FastAPI(
+    title="TensorFlow Melts ML API",
+    description="A class-based REST API for managing a TensorFlow-based Melts model.",
+)
+
+# API router for versioning and organization
+router = APIRouter(prefix="/v1")
+
+import tensorflow as tf
 from mpl_toolkits import mplot3d
 import numpy as np
  
@@ -37,6 +81,13 @@ from tensorflow.keras.utils import plot_model
 
 
 
+# --- Pydantic Response Model ---
+# This create struct of string or other paramtere.. and use PredictionResponse as parameter
+class PredictionResponse(BaseModel):
+    prediction: str
+
+
+
 class  melts(Model):
 
     def __init__(self,inputshape,depth):
@@ -47,8 +98,35 @@ class  melts(Model):
 
         print("constructor or init")
 
-    def getHistory(self,history):
+    def getlog(self, logfile:str):
+        # --- Logging Configuration ---
+        # You can customize this logging config based on your needs.
+        # This setup writes logs to a file named 'app.log'.
+        logging.basicConfig(
+                            level=logging.INFO,
+                            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                            handlers=[
+                            logging.FileHandler("meltlogdata.log"),
+                            logging.StreamHandler()
+                                     ]
+                            )
+        self.logger = logging.getLogger(__name__)
 
+
+    def loadModel(self):
+        
+        if self.mmodel is not None:
+            return self.mmodel
+
+        #prexisting model.
+        if os.path.exists(MODEL_PATH):
+            print("loading the model")
+            self.mmodel=load_model(MODEL_PATH)
+
+
+    def getHistory(self):
+
+        history=self.history
         # Fit the model
         #history = AiModel.fit(X, Y, validation_split=0.33, epochs=150, batch_size=10, verbose=0)
         # list all data in history
@@ -70,6 +148,14 @@ class  melts(Model):
         plt.legend(['train', 'test'], loc='upper left')
         plt.show()
 
+ # Save the plot to an in-memory buffer
+        buffer = BytesIO()
+        plt.savefig(buffer, format="png")
+        buffer.seek(0)
+        plt.close()  # Close the plot to free up memory
+
+        # Return the buffer content as a StreamingResponse
+        return buffer
 
 
     def lr_schedule(epoch):
@@ -184,11 +270,11 @@ class  melts(Model):
     #end of all training records all the weights
     def On_epoch_end(self, epoch, logs=None):
 
-        for layerIndex , layerName in enumerate(self.model.layer):
+        for layerIndex , layerName in enumerate(self.mmodel.layer):
 
             # every layer have 2d weights
-            self.weight_dict["weight" + str(layerName)]  = self.model.layer[layerIndex].get_weight()[0]
-            self.weight_dict["bias" + str(layerName)]    = self.model.layer[layerIndex].get_weight()[1]
+            self.weight_dict["weight" + str(layerName)]  = self.mmodel.layer[layerIndex].get_weight()[0]
+            self.weight_dict["bias" + str(layerName)]    = self.mmodel.layer[layerIndex].get_weight()[1]
       
         if (epoch==0):
 
@@ -402,12 +488,21 @@ class  melts(Model):
 
         return 0 
 
-
+        #The CIFAR-10 database is a well-known, large dataset of images used to train and
+        #test machine learning and computer vision algorithms. The goal is typically to create a model that
+        #can accurately classify the images into their correct categories.
     def getDataset(self): 
 
-        cifara10 = keras.datasets.cifara10
-        (self.x_train, self.y_train),(self.x_test,self.y_test) = cifara10.load()
-            
+        if os.path.exists(DATA_PATH):
+            df     = pd.read_csv(DATA_PATH)
+            x_data = np.random.rand(len(df),28,28,3).astype(np.float32)
+            y_data = pd.get_dumies(df['label']).values
+            self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(x_data,y_data, test_size=0.2,random_state=42)
+        else:
+            cifara10 = keras.datasets.cifara10
+            (self.x_train, self.y_train),(self.x_test,self.y_test) = cifara10.load()
+        
+
 
     #Let’s view the weights as a 28x28 grid where the weights are arranged exactly like their corresponding pixels.
     def plot_weights(self,shape, weights):
@@ -453,7 +548,7 @@ class  melts(Model):
     #zip() is the most efficient approach to combine two or more separate lists into a list of tuples.
     def  ComputeforwardPath(self,inputs):
 
-         layers = self.model.layers
+         layers = self.mmodel.layers
          v = tf.Variable([2.0,2.0,2.0,2.0])
          #w = tf.reshape(v, shape=(4,4))
          print(layers) 
@@ -512,7 +607,7 @@ class  melts(Model):
                 plt.show()
                 """
              with tf.GradientTape() as tape:
-                  out    = self.model.get_layer(layer.name).output 
+                  out    = self.mmodel.get_layer(layer.name).output 
                   #weight = self.model.get_layer(layer.name).get_weights()[0]
                   #bias   = self.model.get_layer(layer.name).get_weights()[1]
             
@@ -523,7 +618,7 @@ class  melts(Model):
                   # for given input, what is currnet layer output.. so input will be always fixed,
                   #for given input any layer will have difftent out... so every time
                   # we given same input and but look any currnet layer output
-                  layerM = Model(inputs=self.model.input, outputs=out)
+                  layerM = Model(inputs=self.mmodel.input, outputs=out)
                   #y_pred = model.predict(traininput, training=True)  # Forward pass
                   if isinstance(layerM, Model) :
                       #set_trainable(layerM)
@@ -538,6 +633,43 @@ class  melts(Model):
          print("outlabe shape", outLabel)
          #last layer
          return [outLabel, predictedOut, weights]
+
+    def evaluate_model(Self):
+        if not os.path.exist(DATA_PATH):
+            raise FileNotFoundError(f"Evaluation data not found at {DATA_PATH}")
+
+        df = pd.read_csv(DATA_PATH)
+        x_data = np.random.rand(len(df),28,28,3).astype(np.float32)
+        y_data = pd.get_dummies(df['label']).values
+
+        _, self.x_test, _, self.y_test= train_test_split(x_data,y_data,test_size=0.2,random_state=42)
+        print("starting model evaluation..")
+        loss, accuracy = self.mmodel.evaluate(self.x_test,self.y_test,verbose=1)
+        return {"loss":loss,"accuracy":accuracy}
+
+
+    def predict_image(self, image_byte):
+
+        # It should be a NumPy array or TensorFlow tensor.
+
+        # Resize the image to 32x32 pixels
+        # The `method` parameter controls the interpolation algorithm
+        image_32x32 = tf.image.resize(image_bytes, (32, 32))
+
+        # Add a batch dimension to the image (e.g., from (32, 32, 3) to (1, 32, 3, 3))
+        image_for_prediction = tf.expand_dims(image_32x32, axis=0)
+
+        # Make a prediction with the resized image
+        predictions = self.mmodel.predict(image_for_prediction)
+
+        #image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        #image = image.resize((32,32))
+        #input_array = np.array(image,dtype=np.float32)/255.0 
+        #input_array = np.expand_dims(input_array,axis=0)
+        #predictions = self.mmodel.predict(input_array)
+        predicted_class = np.argmax(predictions)
+        return int(predicted_class)
+
 
 
     """    
@@ -561,9 +693,6 @@ class  melts(Model):
 
 
     def trainModel(input, output):
-
-
-
 
         x_predict = computeforwardath(input, model)
 
@@ -614,9 +743,38 @@ class  melts(Model):
         self.datasetTest=self.datasetTest.shuffle(buffer_size=1024).batch(64)
 
         #model.fit(x_train, y_train, batch_size=64, validation_split=0.2, epochs=1)
+        self.mmodel.compile( optimizer=keras.optimizers.RMSprop(learning_rate=1e-3),
+                       loss=keras.losses.MeanSquaredError(),
+                       metrics=[keras.metrics.SparseCategoricalAccuracy()],
+
+                       )
 
         print("shape x_train", self.y_train.shape)
         #breakpoint()
+        self.history=self.mmodel.fit(self.datasetTrain, epochs=1)
+        # making epoch 1 , to sped up frame work.
+        print("test model or evulaute")
+        results=self.mmodel.evaluate(self.datasetTest)
+
+        os.makedirs("models", exist_ok=True)
+        self.mmodel.save(MODEL_PATH)
+        # Save the model to the standard SavedModel format
+        # This creates a directory structure containing the model's graph and weights
+        #self.mmodel.save('saved_model_melts', save_format='.keras')
+        plot_model(self.mmodel, "ModelMelts.png")
+        # Assume 'model' is your trained Keras model
+
+        # Create a TFLiteConverter from the Keras model
+        converter = tf.lite.TFLiteConverter.from_keras_model(self.mmodel)
+
+        # Convert the model
+        tflite_model = converter.convert()
+
+        # Save the .tflite file
+        with open('model.tflite', 'wb') as f:
+            f.write(tflite_model)
+
+        print("Model converted and saved to 'model.tflite'.")
 
         return self.datasetTrain,self.datasetTest
 
@@ -668,28 +826,178 @@ def main():
     # caaling call function 
     #output     = modelMelts(tf.keras.Input)
 
-    modelMelts.compile( optimizer=keras.optimizers.RMSprop(learning_rate=1e-3),
-                       loss=keras.losses.MeanSquaredError(),
-                       metrics=[keras.metrics.SparseCategoricalAccuracy()],
 
-                       )
+    # modelMelts.compile( optimizer=keras.optimizers.RMSprop(learning_rate=1e-3),
+    #                    loss=keras.losses.MeanSquaredError(),
+    #                    metrics=[keras.metrics.SparseCategoricalAccuracy()],
+
+    #                   )
 
     datasetTrain,datasetTest = modelMelts.MeltsImageTrainProcess()
- 
-    print("traing which further need to be subcalssed")
-    #does traing on trained data set
-    modelMelts.fit(datasetTrain, epochs=3)
-    plot_model(modelMelts, "ModelMelts.png")
-    breakpoint()
+    
+    #os.makedirs("model", exist_ok=True)
+    #model_path= "models/modelMelts.keras"
+
+    #modelMelts.save(model_path)
+    print(f"Custom model saved to {MODEL_PATH}")
+
+    # Assume 'model' is your trained Keras model
+    # For example:
+    # model = tf.keras.Sequential([tf.keras.layers.Dense(units=1, input_shape=[1])])
+    # model.compile(optimizer='sgd', loss='mean_squared_error')
+    # model.fit([1, 2, 3, 4], [2, 4, 6, 8], epochs=1)
+    # Save the model to the standard SavedModel format
+    # This creates a directory structure, not a single file
+    #model.save('saved_model_melts', save_format='tf')
+    #print("Model saved directly to SavedModel format in 'saved_model_melts' directory.")
+    #import tensorflow as tf
+    #from tensorflow import keras
+
+    # Assume 'model' is your trained Keras model
+
+    # Create a TFLiteConverter from the Keras model
+    #converter = tf.lite.TFLiteConverter.from_keras_model(model)
+
+    # Convert the model
+    #tflite_model = converter.convert()
+
+    # Save the .tflite file
+    #with open('model.tflite', 'wb') as f:
+    #    f.write(tflite_model)
+
+    #print("Model converted and saved to 'model.tflite'.")
 
 
-    print("test model or evulaute")
-    results=modelMelts.evaluate(datasetTest)
+@router.post("/train", summary="Train the model with new data")
+async def train_model_endpoint():
+          
+        try:
+            input_shape = (32,32,3)
+            depth = stackN * 6 + 2
+            model = melts(input_shape, depth)
+            model.MeltsImageTrainProcess()
+            return {"message": "Training completed and model saved "}
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404,detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+#, @router.get("/evaluate", summary="Evaluate the current model") is a decorator used to define a specific API endpoint. It tells FastAPI how to handle an HTTP GET request made to the /evaluate path
+
+@router.get("/evaluate", summary="Evaluate the currnet model")
+async def evaluate_model_endpoint():
+        try:
+             input_shape = (32,32,3)
+             depth = stackN * 6 + 2
+             model = melts(input_shape, depth)
+             result= model.evaluate()
+             return {"message": "Evaluation completed ", **result}
+        except FileNotFoundError as e:
+             raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+# --- API Endpoint ---
+@router.post(
+    "/predict",
+    summary="Make a prediction from an uploaded image",
+    response_model=PredictionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def predict_image_endpoint(file: UploadFile = File(...)):
+    
+    input_shape = (32,32,3)
+    depth  = stackN * 6 + 2
+    model  = melts(input_shape, depth)
+
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Model is not available."
+        )
+    
+    # 1. Validate file content type
+    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image format. Only JPEG, PNG, and WEBP are supported."
+        )
+
+    try:
+
+        # 2. Read file content asynchronously and process
+        content = await file.read()
+        
+        # 3. Use the pre-loaded model to make a prediction
+        prediction = model.predict_image(content)
+        
+        return {"prediction": prediction}
+        
+    except ValueError as ve:
+        # Handle specific exceptions related to image processing
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(ve)
+        )
+    except Exception as e:
+        # Catch any other unexpected exceptions
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
 
 
 
 
 
+# Endpoint for retrieving the log file contents
+@router.get("/get_log", summary="Retrieve application logs")
+async def get_log(api_key: Optional[str] = Header(None)):
+    """
+    Retrieves the contents of the application log file.
+    Access to this endpoint should be restricted for security.
+    """
+    # Simple API key authentication for demonstration purposes
+    # In production, use a proper authentication method (e.g., OAuth2)
+    SECRET_KEY = os.getenv("LOG_ACCESS_KEY", "your-secure-log-key")
+    if api_key != SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    log_file_path = "meltlogdata.log"
+    if not os.path.exists(log_file_path):
+        raise HTTPException(status_code=404, detail="Log file not found")
+
+    try:
+        with open(log_file_path, "r") as f:
+            logs = f.readlines()
+        return {"logs": logs}
+    except Exception as e:
+        logger.error(f"Failed to read log file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read log file: {e}")
+
+
+
+@router.get("/get_plot", summary="Generate and return a sample plot")
+async def get_plot():
+    """Generates a sample plot using matplotlib and returns it as a PNG image."""
+    try:
+
+        input_shape = (32,32,3)
+        depth  = stackN * 6 + 2
+        model  = melts(input_shape, depth)
+        buffer =  model.getHistory()
+         # Save the plot to an in-memory buffer
+        # Return the buffer content as a StreamingResponse
+        return StreamingResponse(buffer, media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate plot: {e}")
+
+
+app.include_router(router)
 
 if __name__=='__main__':
       main()
