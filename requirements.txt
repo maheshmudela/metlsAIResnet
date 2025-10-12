@@ -9,4 +9,6 @@ Pillow
 python-multipart
 python-dotenv
 matplotlib
+pybind11-dev
+
 

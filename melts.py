@@ -29,6 +29,13 @@ from fastapi import Header
 # from typing import Annotated
 # from typing_extensions import Annotated # for older python versions
 
+import sys
+
+# Make sure the build directory is in your Python path
+sys.path.append('MP4/build')
+
+import mp4module
+
 
 # --- Globals and Initialization ---
 MODEL_PATH = "models/modelMelts.keras"
@@ -81,13 +88,6 @@ from tensorflow.keras.utils import plot_model
 
 
 
-# --- Pydantic Response Model ---
-# This create struct of string or other paramtere.. and use PredictionResponse as parameter
-class PredictionResponse(BaseModel):
-    prediction: str
-
-
-
 class  melts(Model):
 
     def __init__(self,inputshape,depth):
@@ -95,7 +95,21 @@ class  melts(Model):
         self.input_shape = inputshape
         self.depth       = depth
         self.mmodel = self.resnet_v1(self.input_shape,int(self.depth))
+        testV = keras.datasets.cifar10
+        (self.x_train, self.y_train),(self.x_test,self.y_test) = testV.load_data()
 
+        # Create an instance of the C++ class
+        self.reader = mp4module.MP4Reader()
+
+        # Call the C++ function
+        success = reader.read_file("MP4/video.mp4")
+
+        if success:
+             print("Successfully read the MP4 file.")
+        else:
+            print("Failed to read the MP4 file.")
+
+        print("Failed to read the MP4 file.")
         print("constructor or init")
 
     def getlog(self, logfile:str):
@@ -191,7 +205,7 @@ class  melts(Model):
                      num_filters=16,
                      kernel_size=3,
                      strides=1,
-                     activation = "NULL",
+                     activation = "mish",
                      batch_normalization=True,
                      conv_first=True):
    
@@ -239,11 +253,7 @@ class  melts(Model):
             #m = (0,) + inputs
             print("x first0", x.shape)
             #data = [ d for x1 in x  for x2 in x1  for x3 in x2]
-  
-            #
-
             x = conv(x)
-       
             print("x firs1t", x)
 
             if batch_normalization:
@@ -403,9 +413,9 @@ class  melts(Model):
         if((depth - 2) % 6) != 0:
             raise ValueError('depth should be 6n+2 (eg 20, 32, 44 in [a])')
 
-        # Start model definition.
+        # Start model definition, 16 means 16 features map per image...
         num_filters = 16
-        num_res_blocks = int((self.depth - 2) / 6) # 2 
+        num_res_blocks = int((self.depth - 2) / 6) # 2 = 6n+2, n meas numdes 
         inputs = tf.keras.Input(self.input_shape)
 
         # inputs = Input(shape=input_shape)
@@ -415,6 +425,13 @@ class  melts(Model):
 
         print("layer1", x.shape);
 
+        # 6n + 2 =   6n=18 = 3
+
+        #ResNetBlock(x) = x + λF(x), where F(x) = Conv3×3(ReLU(Conv3×3(x)))
+        #Our residual tower consists of stack of n of these Residual Blocks. For those models trained with
+        #Batch Normalization, we modify the transformation F so that
+        #F(x) = BatchNorm(Conv3×3(ReLU(BatchNorm(Conv3×3(x)))).
+
         # Instantiate the stack of residual units
         for stack in range(stackN):
            
@@ -423,8 +440,9 @@ class  melts(Model):
 
                 print(" num_res_blocks", res_block, num_res_blocks)
                 strides = 1
+                
+                # for every first block in any  kth stack
                 if stack > 0 and res_block == 0:  # first layer but not first stack
-                    print(" this one ")
                     strides = 2  # downsample
                      
                 y = self.resnet_layer(inputs=x,
@@ -433,24 +451,26 @@ class  melts(Model):
                 y = self.resnet_layer(inputs=y,
                                       num_filters=num_filters,
                                       activation=None)
+
+                # for every first block in stack
                 if stack > 0 and res_block == 0:  # first layer but not first stack
                     # linear projection residual shortcut connection to match
                     # changed dims
-                    print("this 2")
                     x = self.resnet_layer(inputs=x,
                                  num_filters=num_filters,
-                                 kernel_size=1,
+                                 kernel_size=1, # identity matrix
                                  strides=strides,
                                  activation=None,
                                  batch_normalization=False)
 
 
-                print("ading tow layers")
-
                 x = keras.layers.add([x, y])
                 x = self.mish(x)
+            
+
             num_filters *= 2
 
+        #loop back 
         print("reent x:", x, "num filter", num_filters)
 
         # Add classifier on top.
@@ -670,6 +690,25 @@ class  melts(Model):
         predicted_class = np.argmax(predictions)
         return int(predicted_class)
 
+    def addNewTestCase(self, xImage, yLabel):
+
+        x_new=tf.image.resize(xImage,(32,32))
+        #cnvert label to np array,
+        y_new = np.array(yLabel).reshape(1,1)
+        
+        # Assume x_new and y_new are already loaded and preprocessed
+        x_new.shape = (1, 32, 32, 3)
+        y_new.shape = (1, 1)
+
+        (x_train, y_train), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
+
+
+        x_combined_train = np.concatenate([x_train, x_new], axis=0)
+        y_combined_train = np.concatenate([y_train, y_new], axis=0)
+        
+        self.x_train = x_combined_train
+        self.y_train = y_combined_train
+
 
 
     """    
@@ -728,9 +767,6 @@ class  melts(Model):
         #mmodel = self.resnet_v1(self.input_shape,int(self.depth))
         #Read data base and preproces and sepatare as train and test data
         #getDataset(self)
-        testV = keras.datasets.cifar10
-        (self.x_train, self.y_train),(self.x_test,self.y_test) = testV.load_data()
-
         #get as tuple of  data set as training and test
         self.datasetTrain=tf.data.Dataset.from_tensor_slices((self.x_train, self.y_train))
 
@@ -817,6 +853,7 @@ class  melts(Model):
 
 #main
 stackN = 3
+
 def main():
 
     input_shape = (32,32,3)
@@ -867,6 +904,36 @@ def main():
 
     #print("Model converted and saved to 'model.tflite'.")
 
+#THis is to send response 
+class NewTestCase(BaseModel):
+    mesg : str
+
+
+@router.post("/addNewTest",
+            summary="add new test case for training",
+            status_code=401
+            )
+
+async def addNewLabel(
+    image: UploadFile = File(...),
+    label: int = int(-1)
+ 
+    ):
+
+        try:
+
+            input_shape=(32,32,3)
+            depth=stackN*6+2
+            model=melts(input_shape,depth)
+            await model.addNewLabel(image, label)
+            mesg = "added new test case "
+            return mesg
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 @router.post("/train", summary="Train the model with new data")
 async def train_model_endpoint():
@@ -899,7 +966,10 @@ async def evaluate_model_endpoint():
              raise HTTPException(status_code=500, detail=str(e))
 
 
-
+# --- Pydantic Response Model ---
+# This create struct of string or other paramtere.. and use PredictionResponse as parameter
+class PredictionResponse(BaseModel):
+    prediction: str
 
 # --- API Endpoint ---
 @router.post(

@@ -84,6 +84,13 @@ curl -X 'POST' 'http://localhost:3000/v1/train'
 curl -X 'GET' 'http://localhost:3000/v1/evaluate'
 #Use code with caution.
 
+#curl -X POST "http://127.0.0.1:8000/addNewTestCase" \
+#-H "Content-Type: multipart/form-data" \
+#-F "image=@/path/to/your/image.jpg" \
+#-F "label=new_class"
+
+
+
 #Predict with an image file:
 #sh
 #curl -X 'POST' 'http://your-server-ip/v1/predict' \
